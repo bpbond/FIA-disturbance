@@ -8,7 +8,7 @@ STATELIST <- c("MI", "WI", "OH", "PA", "VT", "NY")
 
 # -----------------------------------------------------------------------------
 plotstate <- function(d) {
-  state <- paste(unique(d$STATE), collapse="-")
+  state <- paste(unique(d$STATE_ABBREV), collapse="-")
 
   d$Disturbed <- "Undisturbed"
   d$Disturbed[d$Disturbance_group != "None"] <- "Disturbed"
@@ -22,9 +22,20 @@ plotstate <- function(d) {
   p <- p + xlab("Stand age (yr)") + ylab("Annual net growth (ft3/acre)")
   p <- p + coord_cartesian(xlim=c(-10, 200), ylim=c(-5, 120))
   p <- p + geom_smooth(fill=NA, method='loess')
+  p <- p + geom_point(data=d_obs, size=5, pch=1)
   p <- p + ggtitle(state)
   print(p)
   save_plot(paste0("Age_growth_prod_", state))
+  
+  p <- qplot(STDAGE, ANN_NET_GROWTH_ACRE, data=d1, color=Disturbed) 
+  p <- p + facet_grid(leafHabit ~ Disturbed)
+  p <- p + xlab("Stand age (yr)") + ylab("Annual net growth (ft3/acre)")
+  p <- p + coord_cartesian(xlim=c(-10, 200), ylim=c(-5, 120))
+  p <- p + geom_smooth(fill=NA, method='loess')
+  p <- p + geom_point(data=d_obs, size=5, pch=1)
+  p <- p + ggtitle(state)
+  print(p)
+  save_plot(paste0("Age_growth_dstrb_", state))
   
   d2 <- d %>%
     group_by(STDAGE, Disturbance_group, leafHabit) %>%
@@ -35,6 +46,7 @@ plotstate <- function(d) {
   p <- p + xlab("Stand age (yr)") + ylab("Annual net growth (ft3/acre)")
   p <- p + coord_cartesian(xlim=c(-10, 200), ylim=c(-5, 120))
   p <- p + geom_smooth(fill=NA, method='lm')
+  p <- p + geom_point(data=d_obs, size=5, pch=1)
   p <- p + ggtitle(state)
   print(p)
   save_plot(paste0("Age_growth_prod_dstrb_", state))
@@ -45,6 +57,7 @@ plotstate <- function(d) {
   p1 <- p1 + xlab("Years since disturbance") + ylab("Annual net growth (ft3/acre)")
   p1 <- p1 + coord_cartesian(ylim=c(-250,250))
   p1 <- p1 + ggtitle(state)
+  p1 <- p1 + geom_point(data=d_obs, size=5, pch=1)
   print(p1)
   save_plot(paste0("Disturbance_growth_", state))
 }
@@ -64,7 +77,44 @@ theme_set(theme_bw())
 library(reshape2)
 library(dplyr)
 
+# Read in observed data and make field names match FIA stuff
+d_obs <- read_csv("observed_data.csv", datadir="observed_data/") %>%
+  subset(varname=="ANPP")
+d_obs$STDAGE <- d_obs$year - 1918
+d_obs$Disturbed <- "Undisturbed"
+d_obs$Disturbed[d_obs$treatment == "disturbance"] <- "Disturbed"
+d_obs$leafHabit <- "Deciduous"
+d_obs$Productivity <- "High productivity"
+d_obs$disturbanceAge <- d_obs$year - 2008
+d_obs$Disturbance_group <- "None"
+d_obs$Disturbance_group[d_obs$treatment == "disturbance"] <- "Vegetation"
 
+# Convert tons C/ha to ft3/acre
+# Wood density from http://www.engineeringtoolbox.com/wood-density-d_40.html
+d_obs$ANN_NET_GROWTH_ACRE <- ( d_obs$value * 1000 # Mg C to kg C
+                               #* 2 # kg C to kg
+                               / 0.7  # wood density, kg/m3
+                               * 0.02831685  # ft3/m3
+                               / 2.47105 # acre/ha
+)
+
+
+# Read state code names
+STATECD_names <- read_csv("STATECD_codes.csv", datadir=DATADIR)
+STATECD_names$STATECD <- as.numeric(STATECD_names$STATECD)
+
+# Read disturbance code information
+DSTRBCD_codes <- read_csv("DSTRBCD_codes.csv", datadir=DATADIR)
+DSTRBCD_codes$Disturbance_type <- NULL  # we just care about aggregated group info
+
+# Read forest type code names. These are just the group codes, so need to 
+# round FORTYPCD to lowest 10
+FORTYPCD_names <- read_csv("FORTYPCD_codes.csv", datadir=DATADIR)
+FORTYPCD_names$leafHabit <- "Deciduous"
+FORTYPCD_names$leafHabit[FORTYPCD_names$FORTYPCD < 400] <- "Evergreen"
+
+
+# State by state, read in data, make plots, then make a final combined plot at the end
 d_all <- data.frame()
 for(STATE in STATELIST) {
   CONDITION_TABLE <- paste0(STATE, "_COND.CSV.gz")
@@ -91,7 +141,6 @@ for(STATE in STATELIST) {
     group_by(STATECD, INVYR, PLT_CN) %>%
     summarise(ANN_NET_GROWTH_ACRE = sum(ANN_NET_GROWTH * TPAGROW_UNADJ, na.rm=TRUE))
   
-  
   # Read condition table. We specify the types of DSTRBCD1 and DSTRBYR1
   # because otherwise readr::read_csv guesses them wrong
   printlog("Reading", CONDITION_TABLE)
@@ -101,31 +150,20 @@ for(STATE in STATELIST) {
                               DSTRBYR1 = col_numeric(),
                               SITECLCD = col_numeric()
                             ))
-  d_cond$DSTRBYR1[d_cond$DSTRBYR1 == 9999] <- NA
+  d_cond$DSTRBYR1[d_cond$DSTRBYR1 == 9999] <- NA # FIA uses 9999 for missing year
   
   d_cond <- d_cond %>%
     filter(COND_STATUS_CD == 1) %>%
     select(STATECD, INVYR, UNITCD, COUNTYCD, PLT_CN, FORTYPCD, SITECLCD,
            STDAGE, DSTRBCD1, DSTRBYR1)
   
-  # Read forest type code names. These are just the group codes, so need to 
-  # round FORTYPCD to lowest 10
-  FORTYPCD_names <- read_csv("FORTYPCD_codes.csv", datadir=DATADIR)
   printlog("Merging with forest type code names...")
   d_cond$FORTYPCD <- floor(d_cond$FORTYPCD / 10.0) * 10
-  FORTYPCD_names$leafHabit <- "Deciduous"
-  FORTYPCD_names$leafHabit[FORTYPCD_names$FORTYPCD < 400] <- "Evergreen"
   d_cond <- merge(d_cond, FORTYPCD_names)
   
-  # Read state code names
-  STATECD_names <- read_csv("STATECD_codes.csv", datadir=DATADIR)
-  STATECD_names$STATECD <- as.numeric(STATECD_names$STATECD)
   printlog("Merging with state code names...")
   d_cond <- merge(d_cond, STATECD_names)
   
-  # Read disturbance code information
-  DSTRBCD_codes <- read_csv("DSTRBCD_codes.csv", datadir=DATADIR)
-  DSTRBCD_codes$Disturbance_type <- NULL  # we just care about aggregated group info
   printlog("Merging with disturbance code information")
   d_cond <- merge(d_cond, DSTRBCD_codes)
   d_cond$Disturbance_group <- relevel(factor(d_cond$Disturbance_group), "None")
@@ -135,13 +173,15 @@ for(STATE in STATELIST) {
   
   # Disturbance data
   d$disturbanceAge <- d$INVYR - d$DSTRBYR1
-  d$Productivity <- "Low (≥4) productivity"
-  d$Productivity[d$SITECLCD < 4] <- "High (<4) productivity"
+  d$Productivity <- "Low productivity"
+  d$Productivity[d$SITECLCD < 4] <- "High productivity"
   
   d_summarized <- d %>%
     group_by(STATE, Disturbance_group, leafHabit, STDAGE, Productivity) %>% 
     summarise(ANN_NET_GROWTH_ACRE = mean(ANN_NET_GROWTH_ACRE),
               disturbanceAge = mean(disturbanceAge))
+  
+  d_summarized$STATE_ABBREV <- STATE
   
   plotstate(d_summarized)  
   
