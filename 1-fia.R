@@ -9,7 +9,7 @@ STATELIST <- c("MI", "WI", "OH", "PA", "VT", "NY")
 # -----------------------------------------------------------------------------
 plotstate <- function(d) {
   state <- paste(unique(d$STATE_ABBREV), collapse="-")
-
+  
   d$Disturbed <- "Undisturbed"
   d$Disturbed[d$Disturbance_group != "None"] <- "Disturbed"
   
@@ -183,35 +183,39 @@ for(STATE in STATELIST) {
   
   d_summarized$STATE_ABBREV <- STATE
   
-  plotstate(d_summarized)  
+  #plotstate(d_summarized)  
   
   d_all <- rbind(d_all, d_summarized)
-  
-  # Chris's email figure: select say 3 disturbance types and produce a figure
-  # that shows the relative deviation, across age, from the control or “none”
-  # scenario
-  d_none <- d_all %>%
-    filter(Disturbance_group == "None") %>%
-    group_by(leafHabit, Productivity, STDAGE) %>%
-    summarise(ANGA_NONE = mean(ANN_NET_GROWTH_ACRE))
-
-  d_disturbs <- d_all %>%
-    filter(Disturbance_group %in% c("Vegetation", "Disease", "Weather", "Insects")) %>%
-    group_by(Disturbance_group, leafHabit, Productivity, STDAGE) %>%
-    summarise(ANN_NET_GROWTH_ACRE = mean(ANN_NET_GROWTH_ACRE))
-  
-  d_mrg <- merge(d_disturbs, d_none)
-  
-  p <- qplot(STDAGE, (ANN_NET_GROWTH_ACRE-ANGA_NONE)/ANGA_NONE, data=d_mrg, color=leafHabit) 
-  p <- p + facet_wrap(~Disturbance_group, scales="free")
-  p <- p + geom_smooth(method='lm')
-  p <- p + scale_y_continuous(labels = percent_format(), limits=c(-5,2))
-  p <- p + xlab("Stand age (yr)") + ylab("Change from no disturbance")
-  save_plot("Relative_change_disturbance.pdf")
   
 }
 
 plotstate(d_all)
+
+# Chris's email figure: select say 3 disturbance types and produce a figure
+# that shows the relative deviation, across age, from the control or “none”
+# scenario
+library(scales)
+d_none <- d_all %>%
+  filter(Disturbance_group == "None") %>%
+  group_by(leafHabit, Productivity, STDAGE) %>%
+  summarise(ANGA_NONE = mean(ANN_NET_GROWTH_ACRE))
+
+d_disturbs <- d_all %>%
+  filter(Disturbance_group %in% c("Vegetation", "Disease", "Weather", "Insects")) %>%
+  group_by(Disturbance_group, leafHabit, Productivity, STDAGE) %>%
+  summarise(ANN_NET_GROWTH_ACRE = mean(ANN_NET_GROWTH_ACRE))
+
+d_mrg <- merge(d_disturbs, d_none)
+
+p <- qplot(STDAGE, (ANN_NET_GROWTH_ACRE-ANGA_NONE)/ANGA_NONE, data=d_mrg, color=leafHabit) 
+p <- p + facet_wrap(~Disturbance_group, scales="free")
+p <- p + scale_y_continuous(labels = percent_format(), limits=c(-5,2))
+p <- p + xlab("Stand age (yr)") + ylab("Change from no disturbance")
+p <- p + scale_color_discrete("Leaf habit")
+print(p + geom_smooth(method='lm', fill=NA, size=1.5))
+save_plot("Relative_change_disturbance_lm.pdf")
+print(p + geom_smooth(method='loess', fill=NA, size=1.5))
+save_plot("Relative_change_disturbance_loess.pdf")
 
 save_data(d_all)
 
